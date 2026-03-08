@@ -1,47 +1,66 @@
 import yfinance as yf
 import pandas as pd
+import streamlit as st
 
 
+# -------------------------------
+# FX DATA CACHE (USD → INR)
+# -------------------------------
+@st.cache_data(ttl=86400)
+def get_fx_data(start="2015-01-01", end=None):
+    fx = yf.download("USDINR=X", start=start, end=end)
+
+    if isinstance(fx.columns, pd.MultiIndex):
+        fx.columns = fx.columns.get_level_values(0)
+
+    return fx["Close"]
+
+
+# -------------------------------
+# STOCK DATA LOADER
+# -------------------------------
+@st.cache_data(ttl=3600)
 def load_data(ticker, start="2015-01-01", end=None, convert_to_inr=False):
-    """
-    Download stock data.
-    Optionally convert USD stocks to INR using historical USDINR rate.
-    """
 
     df = yf.download(ticker, start=start, end=end)
 
-    # Flatten MultiIndex if present
+    # Flatten MultiIndex
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
     df.dropna(inplace=True)
 
     if convert_to_inr:
-        stock = yf.Ticker(ticker)
-        currency = stock.info.get("currency", "USD")
 
-        # Convert only if stock is in USD
+        stock = yf.Ticker(ticker)
+
+        try:
+            currency = stock.fast_info["currency"]
+        except Exception:
+            currency = "USD"
+
         if currency == "USD":
 
-            fx = yf.download("USDINR=X", start=start, end=end)
+            fx = get_fx_data(start, end)
 
-            if isinstance(fx.columns, pd.MultiIndex):
-                fx.columns = fx.columns.get_level_values(0)
-
-            fx = fx["Close"].reindex(df.index).ffill()
+            fx = fx.reindex(df.index).ffill()
 
             for col in ["Open", "High", "Low", "Close"]:
-                df[col] = df[col] * fx
-
-            print("Converted USD prices to INR")
+                if col in df.columns:
+                    df[col] = df[col] * fx
 
     return df
 
 
+# -------------------------------
+# STOCK INFO FETCHER
+# -------------------------------
+@st.cache_data(ttl=3600)
 def get_stock_info(ticker):
-    """Fetch basic stock information."""
+
     try:
         stock = yf.Ticker(ticker)
+
         info = stock.info
 
         return {
@@ -57,4 +76,15 @@ def get_stock_info(ticker):
         }
 
     except Exception:
-        return {"name": ticker}
+
+        return {
+            "name": ticker,
+            "sector": "N/A",
+            "industry": "N/A",
+            "market_cap": "N/A",
+            "currency": "USD",
+            "exchange": "N/A",
+            "52w_high": "N/A",
+            "52w_low": "N/A",
+            "avg_volume": "N/A",
+        }
